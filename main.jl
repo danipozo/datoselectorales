@@ -1,8 +1,9 @@
-using DataFrames, Gadfly, Compose
+using DataFrames, Gadfly
 
+# DHont method. Takes filtered data.
 function DHont(ne::Int64, np::Int64, vp::Array{Float64,1}, vt::Float64)
     a = [vp[i] for i=1:np]
-    #filter!(v->v/vt >= 0.03, a)
+    #filter!(v->v/vt >= 0.03, a) # 3% barrier.
     (s,) = size(a)
     e = [0 for i=1:s]
 
@@ -15,118 +16,118 @@ function DHont(ne::Int64, np::Int64, vp::Array{Float64,1}, vt::Float64)
     return e
 end
 
-function myFilt(v,region)
-    x,y = v
-    x==region
-end
-
-function ProcessRegion(region, year)
-    if(year == "2015")
-        region = join(["CSV2015/", ""], region)
-        rFile = join([region, ""], ".csv")
-        t = readtable(rFile, header=false)
-
-        (f,c) = size(t)
-        ne = parse(Int64, t[f,1])
-        np = div(c-8,2)
-        vp = [parse(Float64, t[f-1,i]) for i=9:2:(c-1)]
-        vt = parse(Float64, t[f-1,5])
-
-        cand = [t[1,i] for i=9:2:(c-1)]
-    
-        cand_vp = [[vp[i], cand[i]] for i=1:np]
-    
-        filter!(v->v[1]/vt >= 0.03, cand_vp)
-        (s,) = size(cand_vp)
-
-        cand = [cand_vp[i][2] for i=1:s]
-
-        e = DHont(ne, np, vp, vt)
-
-        aux = [[cand[i], e[i]] for i=1:s]
-        filter!(v->v[2]!=0, aux)
-
-        (s,) = size(aux)
-        cand2 = ["\u89" for i=1:s]
-        e2 = [0 for i=1:s]
-        for i=1:s
-            cand2[i] = aux[i][1]
-            e2[i] = aux[i][2]
-        end
-
-        return cand2, e2
-    else
-        rFile = join(["CSV2011/datos", ""], ".csv")
-        t = readtable(rFile, header=false)
-
-        a = [[t[i,1], t[i,13]] for i=3:54]
-        b = [(t[i,1],[t[i,j] for j=17:2:139], [t[i,j] for j=18:2:140], [t[1,j] for j=17:2:139]) for i=3:54]
-
-        filter!(v->v[1]==region, a)
-        filter!(x->myFilt(x,region), b)
-        (s,) = size(b)
-        c = [[""] for i=1:s]       
-        d = [[""] for i=1:s]
-        p = [["\u89"] for i=1:s]
-
-        for i=1:s
-            x, c[i], d[i], p[i] = b[i]
-        end
-
-        for i=1:s
-            c[i] = [filter(v->v!=',', c[i][j]) for j=1:61]
-        end
-
-        f = [[0.0] for i=1:s]
-        g = [[0] for i=1:s]
-
-        for i=1:s
-            f[i] = [parse(Float64, c[i][j]) for j=1:61]
-            g[i] = [parse(Int64, d[i][j]) for j=1:61]
-        end
-    
-        np = 61
-        ne = 0
-        vp = [0.0 for i=1:61]
-        vt = 0.0
-        for i=1:s
-            for j=1:61
-                ne += g[i][j]
-                vp[j] += f[i][j]
-                vt += f[i][j]
-            end
-        end
-
-        cand_vp = [[vp[i], p[1][i]] for i=1:np]
-        filter!(v->v[1]/vt >= 0.03, cand_vp)
-        (s,) = size(cand_vp)
-
-        cand = [cand_vp[i][2] for i=1:s]
-
-        e = DHont(ne, np, vp, vt)
-
-        aux = [[cand[i], e[i]] for i=1:s]
-        filter!(v->v[2]!=0, aux)
-
-        (s,) = size(aux)
-        cand2 = ["\u89" for i=1:s]
-        e2 = [0 for i=1:s]
-        for i=1:s
-            cand2[i] = aux[i][1]
-            e2[i] = aux[i][2]
-        end
-
-        return cand2, e2
-               
-    end
-end
-
-function ProcessState2011()
-    rFile = join(["CSV2011/datos", ""], ".csv")
+function GetRegionData2015(region)
+    rFile = "CSV2015/"*region*".csv"
     t = readtable(rFile, header=false)
 
-    cand = [t[1,i] for i=17:2:139]
+    (f,c) = size(t)
+    ne = parse(Int64, t[f,1]) # Number of seats.
+    np = div(c-8,2)           # Number of parties.
+    vp = [parse(Float64, t[f-1,i]) for i=9:2:(c-1)] # Votes for each party.
+    vt = parse(Float64, t[f-1,5]) # Total of votes.
+
+    cand = [t[1,i] for i=9:2:(c-1)] # Names of the parties.
+    e_real = [parse(Int64, t[f-1,i]) for i=10:2:c] # Number of seats each one got.
+
+    cand_vp = [[vp[i], cand[i], e_real[i]] for i=1:np]
+
+    # Filter out parties not having seats or
+    # not having 3% of the votes.
+    filter!(v->v[1]/vt >= 0.03, cand_vp)
+    (s,) = size(cand_vp)
+
+    # Rebuild original arrays.
+    cand = [cand_vp[i][2] for i=1:s]
+    vp = [Float64(cand_vp[i][1]) for i=1:s]
+    e_real = [cand_vp[i][3] for i=1:s]
+
+    # Run D'Hont method on those arrays.
+    e = DHont(ne, s, vp, vt)
+
+    # Filter out those who didn't get seats neither really
+    # nor in the simulation.
+    aux = [[cand[i], e[i], e_real[i]] for i=1:s]
+    filter!(v->v[2]!=0 || v[3]!=0, aux)
+
+    # Copy into new arrays and return.
+    (s,) = size(aux)
+    cand2 = ["\u89" for i=1:s]
+    e2 = [0 for i=1:s]
+    e_real2 = [0 for i=1:s]
+    for i=1:s
+        cand2[i] = aux[i][1]
+        e2[i] = aux[i][2]
+        e_real2[i] = aux[i][3]
+    end
+
+    return cand2, e2, e_real2
+end
+
+function GetRegionData2011(region)
+    file = "CSV2011/datos.csv"
+    t = readtable(file, header=false)
     
+    cand = [t[1,i] for i=17:2:139]
+    a = [("\u89", 0.0, [], []) for i=3:54]
+    s = 0
+    for i=1:52
+        if(t[i+2,1] == region)
+            s += 1
+            a[s] = (t[i+2,1], parse(Float64, filter(v->v!=',',t[i+2,13])), [parse(Float64, filter(v->v!=',', t[i+2,j])) for j=17:2:139], [parse(Int64, t[i+2,j]) for j=18:2:140])
+        end
+    end
+
+    ne = 0
+    np = 61
+    vp = [0.0 for i=1:61]
+    vt = 0.0
+    e_real = [0 for i=1:61]
+
+    for i=1:s
+        name, _vt, _vp, _e_real = a[i]
+        vt += _vt
+        for j=1:61
+            vp[j] += _vp[j]
+            ne += _e_real[j]
+            e_real[j] += _e_real[j]
+        end
+    end
+
+    cand_vp = [[cand[i], vp[i], e_real[i]] for i=1:61]
+    filter!(v->v[2]/vt >= 0.03 || v[3]!=0, cand_vp)
+
+    (s,) = size(cand_vp)
+    
+    cand = [cand_vp[i][1] for i=1:s]
+    vp = [Float64(cand_vp[i][2]) for i=1:s]
+    e_real = [cand_vp[i][3] for i=1:s]
+    
+    println(cand, "\n", vp, "\n", e_real)
+    
+    e = DHont(ne, s, vp, vt)
+
+    aux = [[cand[i], e[i], e_real[i]] for i=1:s]
+    filter!(v->v[2]!=0 || v[3]!=0, aux)
+
+    (s,) = size(aux)
+    cand2 = ["\u89" for i=1:s]
+    e2 = [0 for i=1:s]
+    e_real2 = [0 for i=1:s]
+    for i=1:s
+        cand2[i] = aux[i][1]
+        e2[i] = aux[i][2]
+        e_real2[i] = aux[i][3]
+    end
+
+    return cand2, e2, e_real2
+end
+
+function GetStateData2011()
+    file = "CSV2011/datos.csv"
+    t = readtable(file, header=false)
+    
+    cand = [t[1,i] for i=17:2:139]
+
     np = 61
     vp = [parse(Float64, filter(v->v!=',', t[56,i])) for i=17:2:139]
     e_real = [parse(Int64, t[56,i]) for i=18:2:140]
@@ -139,70 +140,103 @@ function ProcessState2011()
     cand_vp = [[vp[i], cand[i], e_real[i]] for i=1:np]
     filter!(v->v[1]/vt >= 0.03 || v[3]!=0, cand_vp)
     (s,) = size(cand_vp)
-    println(size(cand_vp))
 
     cand = [cand_vp[i][2] for i=1:s]
-    
-    e = DHont(ne, np, vp, vt)
-    println(size(e))
-    
+    vp = [Float64(cand_vp[i][1]) for i=1:s]
+    e_real = [cand_vp[i][3] for i=1:s]
+
+    e = DHont(ne, s, vp, vt)
+
     aux = [[cand[i], e[i], e_real[i]] for i=1:s]
-    filter!(v->v[2]!=0 || v->v[3]!=0, aux)
+    filter!(v->v[2]!=0 || v[3]!=0, aux)
 
     (s,) = size(aux)
     cand2 = ["\u89" for i=1:s]
     e2 = [0 for i=1:s]
-    e2_real = [0 for i=1:s]
+    e_real2 = [0 for i=1:s]
     for i=1:s
         cand2[i] = aux[i][1]
         e2[i] = aux[i][2]
-        e2_real[i] = aux[i][3]
+        e_real2[i] = aux[i][3]
     end
 
-    return cand2, e2, e2_real
+    return cand2, e2, e_real2
+
+end
+
+function GetStateData2015()
+    file = "CSV2015/Estado.csv"
+    t = readtable(file, header=false)
+
+    cand = [t[1,i] for i=1:2:129]
+    np = 65
+    vp = [parse(Float64, filter(v->v!=',', t[55,i])) for i=1:2:129]
+    e_real = [parse(Int64, t[55,i]) for i=2:2:130]
+    vt = 0.0
+    ne = 350
+    for i=1:65
+        vt += vp[i]
+    end
+
+    cand_vp = [[cand[i], vp[i], e_real[i]] for i=1:65]
+    filter!(v->v[2]/vt >= 0.03 || v[3]!=0, cand_vp)
+
+    (s,) = size(cand_vp)
+    
+    cand = [cand_vp[i][1] for i=1:s]
+    vp = [Float64(cand_vp[i][2]) for i=1:s]
+    e_real = [cand_vp[i][3] for i=1:s]
+    
+    println(cand, "\n", vp, "\n", e_real)
+    
+    e = DHont(ne, s, vp, vt)
+
+    aux = [[cand[i], e[i], e_real[i]] for i=1:s]
+    filter!(v->v[2]!=0 || v[3]!=0, aux)
+
+    (s,) = size(aux)
+    cand2 = ["\u89" for i=1:s]
+    e2 = [0 for i=1:s]
+    e_real2 = [0 for i=1:s]
+    for i=1:s
+        cand2[i] = aux[i][1]
+        e2[i] = aux[i][2]
+        e_real2[i] = aux[i][3]
+    end
+
+    return cand2, e2, e_real2
+
+end
+
+function plotData(title, cand, e_, e_real)
+    (s,) = size(cand)
+    println(cand, e_, e_real)
+    cand2 = [cand[i]*"-"*string(e_[i]) for i=1:s]
+    cand3 = [cand[i]*"-"*string(e_real[i]) for i=1:s]
+
+    p1 = plot(x=cand2, y=e_, Geom.bar, Theme(bar_spacing=0.2inch), Guide.ylabel("Escaños asignados"), Guide.xlabel("Candidaturas"), Guide.title("Reparto de escaños simulado"))
+    p2 = plot(x=cand3, y=e_real, Geom.bar, Theme(bar_spacing=0.2inch), Guide.ylabel("Escaños asignados"), Guide.xlabel("Candidaturas"), Guide.title("Reparto de escaños real"))
+
+
+    draw(PDF(title*".pdf", 6inch, 5inch), hstack(p1,p2))
+
 end
 
 if(ARGS[1] == "--comunidad")
     if(ARGS[2] == "2015")
-        c,e2 = ProcessRegion(ARGS[3], ARGS[2])
-        (s,) = size(e2)
-
-        for i=1:s
-            c[i] = join([c[i], ""], join(["-", ""], string(e2[i])))
-        end
-
-        draw(PDF(join([ARGS[3], ""], ".pdf"), 4inch, 3inch), plot(x=c, y=e2, Geom.bar, Theme(bar_spacing=0.2inch), Guide.ylabel("Escaños asignados"), Guide.xlabel("Candidaturas")))
-    elseif(ARGS[2] == "2011") 
-        c,e2 = ProcessRegion(ARGS[3], ARGS[2])
-        println(c,e2)
-        (s,) = size(e2)
-
-        for i=1:s
-            c[i] = join([c[i], ""], join(["-", ""], string(e2[i])))
-        end
-
-        draw(PDF(join([ARGS[3], ""], ".pdf"), 5inch, 5inch), plot(x=c, y=e2, Geom.bar, Theme(bar_spacing=0.2inch, minor_label_font_size=10px), Guide.ylabel("Escaños asignados"), Guide.xlabel("Candidaturas")))   
+        c, e_, e_real = GetRegionData2015(ARGS[3])
+        plotData(ARGS[3], c, e_, e_real)
     else
-        println("Not a valid year")
+        c, e_, e_real = GetRegionData2011(ARGS[3])
+        plotData(ARGS[3], c, e_, e_real)
     end
-else # ARGS[1] == "--estado"
+else
     if(ARGS[2] == "2011")
-        c, e2, e2_real = ProcessState2011()
-        println(e2)
-        (s,) = size(e2)
-
-        c2 = ["\u89" for i=1:s]
-        for i=1:s
-            c2[i] = join([c[i], ""], join([" - ", ""], string(e2[i])))
-        end
-        p1 = plot(x=c2, y=e2, Geom.bar, Theme(bar_spacing=0.2inch), Guide.ylabel("Escaños asignados"), Guide.xlabel("Candidaturas"), Guide.title("Reparto de escaños simulado"))
-        c3 = ["\u89" for i=1:s]
-        for i=1:s
-            c3[i] = join([c[i], ""], join([" - ", ""], string(e2_real[i])))
-        end
-        p2 = plot(x=c3, y=e2_real, Geom.bar, Theme(bar_spacing=0.2inch), Guide.ylabel("Escaños asignados"), Guide.xlabel("Candidaturas"), Guide.title("Reparto de escaños real"))
-        draw(PDF(join(["Estado2011", ""], ".pdf"), 6inch, 5inch), hstack(p1,p2))
+        c, e_, e_real = GetStateData2011()
+        plotData("Estado2011", c, e_, e_real)
     else
+         c, e_, e_real = GetStateData2015()
+        plotData("Estado2015", c, e_, e_real)
+
     end
 end
-
